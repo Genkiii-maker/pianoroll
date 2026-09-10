@@ -66,7 +66,6 @@
       width: 60px;
       accent-color: #3b82f6;
     }
-    /* 追加: トラック管理用のバー */
     #track-bar {
       display: flex;
       gap: 6px;
@@ -111,7 +110,6 @@
       height: 100%;
     }
   </style>
-  <!-- Tone.js & Tonejs/Midi -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
   <script src="https://unpkg.com/@tonejs/midi"></script>
 </head>
@@ -132,7 +130,6 @@
     </div>
   </div>
 
-  <!-- 【追加】トラック切り替え＆音色変更バー -->
   <div id="track-bar">
     <div id="track-list" style="display: flex; gap: 6px;"></div>
     <button id="add-track-btn" class="btn" style="background-color: #4b5563; padding: 4px 8px;">+ トラック追加</button>
@@ -142,7 +139,6 @@
       <option value="synth">Synth</option>
       <option value="fm">FM Synth</option>
       <option value="am">AM Synth</option>
-      <option value="duo">Duo Synth</option>
     </select>
   </div>
 
@@ -164,19 +160,15 @@
     const trackListEl = document.getElementById('track-list');
     const addTrackBtn = document.getElementById('add-track-btn');
 
-    // 音域定義 (全88鍵盤 21: A0 〜 108: C8)
     const MIN_NOTE = 21;
     const MAX_NOTE = 108;
     const TOTAL_NOTES = MAX_NOTE - MIN_NOTE + 1;
 
-    // トラックカラーのプリセット
     const TRACK_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
 
     let beatWidth = 40;   
     let noteHeight = 16;  
 
-    // 【拡張】トラック構造のデータ管理
-    // tracks = [{ id: 0, name: "Track 1", color: "#3b82f6", synthType: "synth", synth: PolySynth, notes: [...] }]
     let tracks = [];
     let currentTrackIndex = 0;
 
@@ -189,13 +181,19 @@
     let scrollX = 0;
     let scrollY = (TOTAL_NOTES - 24) * noteHeight;
 
-    // --- トラック & 音源管理 ---
+    // --- 音声エンジンの最適化 (負荷軽減 & 同時発音数制限) ---
     function createSynth(type) {
       let synthClass = Tone.Synth;
       if (type === 'fm') synthClass = Tone.FMSynth;
       if (type === 'am') synthClass = Tone.AMSynth;
-      if (type === 'duo') synthClass = Tone.DuoSynth;
-      return new Tone.PolySynth(synthClass).toDestination();
+
+      // maxPolyphony: 8 に制限することで音声処理のオーバーフローを防止
+      return new Tone.PolySynth(synthClass, {
+        maxPolyphony: 8,
+        options: {
+          envelope: { attack: 0.01, decay: 0.1, sustain: 0.3, release: 0.2 }
+        }
+      }).toDestination();
     }
 
     function addTrack(name = null, synthType = 'synth') {
@@ -237,7 +235,6 @@
       });
     }
 
-    // 選択中のトラックの音色変更
     synthSelect.addEventListener('change', (e) => {
       if (!tracks[currentTrackIndex]) return;
       const type = e.target.value;
@@ -276,7 +273,6 @@
       }
     });
 
-    // --- MIDIファイルの複数トラック解析 ---
     midiInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -284,7 +280,6 @@
       const buffer = await file.arrayBuffer();
       const parsedMidi = new Midi(buffer);
 
-      // 既存トラック破棄
       tracks.forEach(t => t.synth.dispose());
       tracks = [];
 
@@ -310,7 +305,7 @@
         });
       });
 
-      if (tracks.length === 0) addTrack(); // ノートが無い場合の初期トラック
+      if (tracks.length === 0) addTrack();
 
       currentTrackIndex = 0;
       updateTrackUI();
@@ -319,7 +314,6 @@
       render();
     });
 
-    // --- タッチ・ピンチズーム管理 ---
     const activeTouches = new Map();
     let initialPinchDistance = null;
     let initialBeatWidth = beatWidth;
@@ -356,7 +350,10 @@
               activeNotes.splice(existingIdx, 1);
             } else {
               activeNotes.push({ note: midiNote, startBeat: targetBeat, duration: 1 });
-              tracks[currentTrackIndex].synth.triggerAttackRelease(Tone.Frequency(midiNote, "midi").toNote(), "8n");
+              // プレビュー再生時のエラーハンドリング
+              try {
+                tracks[currentTrackIndex].synth.triggerAttackRelease(Tone.Frequency(midiNote, "midi").toNote(), "8n");
+              } catch (err) {}
             }
             render();
           }
@@ -404,7 +401,6 @@
     canvas.addEventListener('pointerup', handlePointerEnd);
     canvas.addEventListener('pointercancel', handlePointerEnd);
 
-    // --- 再生処理 (複数トラック全再生) ---
     playBtn.addEventListener('click', async () => {
       await Tone.start();
       if (isPlaying) stopPlayback();
@@ -429,10 +425,14 @@
       const intervalMs = (60 / bpm / 4) * 1000;
 
       playTimer = setInterval(() => {
-        // すべてのトラックの該当ノーツを発音
+        // 例外処理を追加し、同時発音過多でも停止しないように安定化
         tracks.forEach(t => {
           t.notes.filter(n => Math.abs(n.startBeat - currentBeat) < 0.125).forEach(n => {
-            t.synth.triggerAttackRelease(Tone.Frequency(n.note, "midi").toNote(), "8n");
+            try {
+              t.synth.triggerAttackRelease(Tone.Frequency(n.note, "midi").toNote(), "8n");
+            } catch (err) {
+              // 発音数が上限に達した場合は安全にスキップ
+            }
           });
         });
 
@@ -455,14 +455,12 @@
       render();
     }
 
-    // --- 描画処理 (全トラック描画) ---
     function render() {
       const width = canvas.width;
       const height = canvas.height;
 
       ctx.clearRect(0, 0, width, height);
 
-      // 背景グリッド描画
       for (let i = 0; i < TOTAL_NOTES; i++) {
         const midiNote = MIN_NOTE + (TOTAL_NOTES - 1 - i);
         const y = (i * noteHeight) - scrollY;
@@ -482,7 +480,6 @@
         ctx.stroke();
       }
 
-      // 拍の縦線描画
       const startB = Math.floor(scrollX / beatWidth);
       const endB = startB + Math.ceil(width / beatWidth) + 1;
 
@@ -495,11 +492,10 @@
         ctx.stroke();
       }
 
-      // 【拡張】全トラックのノーツを描画 (非アクティブトラックは少し透明化)
       tracks.forEach((t, tIdx) => {
         const isActive = (tIdx === currentTrackIndex);
         ctx.fillStyle = t.color;
-        ctx.globalAlpha = isActive ? 1.0 : 0.4; // 選択中でないトラックは半透明で描画
+        ctx.globalAlpha = isActive ? 1.0 : 0.4;
 
         t.notes.forEach(n => {
           const noteIdx = TOTAL_NOTES - 1 - (n.note - MIN_NOTE);
@@ -518,7 +514,6 @@
       });
       ctx.globalAlpha = 1.0;
 
-      // 再生バー描画
       if (isPlaying) {
         const cursorX = (currentBeat * beatWidth) - scrollX;
         ctx.strokeStyle = '#ef4444';
@@ -531,7 +526,6 @@
       }
     }
 
-    // 初期トラック追加 & 画面リサイズ対応
     addTrack();
     resizeCanvas();
   </script>
