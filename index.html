@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Mobile MIDI Editor & Visualizer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #controls {
+      padding: 8px 12px;
+      background-color: #1e1e1e;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: wrap;
+      z-index: 10;
+      border-bottom: 1px solid #333;
+    }
+    .btn {
+      background-color: #3b82f6;
+      color: white;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+    }
+    .btn:active {
+      transform: scale(0.96);
+    }
+    select {
+      background-color: #2a2a2a;
+      color: white;
+      border: 1px solid #444;
+      padding: 6px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    #editor-container {
+      flex: 1;
+      position: relative;
+      width: 100%;
+      height: 100%;
+      touch-action: none; /* スマホでのスクロール誤動作防止 */
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+  <!-- Tone.js (Web Audio合成 & 音声出力用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+
+  <div id="controls">
+    <button id="play-btn" class="btn" style="background-color: #10b981;">再生</button>
+    <button id="clear-btn" class="btn" style="background-color: #ef4444;">消去</button>
+    
+    <label for="synth-select" style="font-size: 12px;">音色:</label>
+    <select id="synth-select">
+      <option value="synth">Basic Synth</option>
+      <option value="fm">FM Synth</option>
+      <option value="am">AM Synth</option>
+      <option value="duo">Duo Synth</option>
+    </select>
+  </div>
+
+  <div id="editor-container">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const playBtn = document.getElementById('play-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const synthSelect = document.getElementById('synth-select');
+
+    // 音域と設定 (C3: 48 ~ C5: 72)
+    const MIN_NOTE = 48;
+    const MAX_NOTE = 72;
+    const TOTAL_NOTES = MAX_NOTE - MIN_NOTE + 1;
+    const TOTAL_BEATS = 16; // グリッドの拍数 (16分音符 16個 = 1小節)
+
+    let notes = []; // [{ note: 60, startBeat: 0, duration: 1 }]
+    let isPlaying = false;
+    let currentBeat = 0;
+    let playInterval = null;
+
+    // --- Tone.js 音源設定 ---
+    let currentSynth = new Tone.Synth().toDestination();
+
+    synthSelect.addEventListener('change', (e) => {
+      currentSynth.dispose();
+      switch (e.target.value) {
+        case 'fm':
+          currentSynth = new Tone.FMSynth().toDestination();
+          break;
+        case 'am':
+          currentSynth = new Tone.AMSynth().toDestination();
+          break;
+        case 'duo':
+          currentSynth = new Tone.DuoSynth().toDestination();
+          break;
+        default:
+          currentSynth = new Tone.Synth().toDestination();
+      }
+    });
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth * window.devicePixelRatio;
+      canvas.height = (window.innerHeight - document.getElementById('controls').offsetHeight) * window.devicePixelRatio;
+      render();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ノートナンバーから周波数/音名に変換
+    function midiToNoteName(midi) {
+      return Tone.Frequency(midi, "midi").toNote();
+    }
+
+    // --- タップによる打ち込み・削除 ---
+    canvas.addEventListener('pointerdown', async (e) => {
+      await Tone.start(); // Web Audioのコンテクスト有効化
+
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * window.devicePixelRatio;
+      const y = (e.clientY - rect.top) * window.devicePixelRatio;
+
+      const cellWidth = canvas.width / TOTAL_BEATS;
+      const cellHeight = canvas.height / TOTAL_NOTES;
+
+      const beat = Math.floor(x / cellWidth);
+      const noteIndex = TOTAL_NOTES - 1 - Math.floor(y / cellHeight);
+      const midiNote = MIN_NOTE + noteIndex;
+
+      // 既存のノートがあるかチェック（存在すれば削除、なければ追加）
+      const existingIdx = notes.findIndex(n => n.note === midiNote && n.startBeat === beat);
+
+      if (existingIdx >= 0) {
+        notes.splice(existingIdx, 1);
+      } else {
+        notes.push({ note: midiNote, startBeat: beat, duration: 1 });
+        // タップ時にプレビュー再生
+        currentSynth.triggerAttackRelease(midiToNoteName(midiNote), "8n");
+      }
+
+      render();
+    });
+
+    // --- 再生処理 ---
+    playBtn.addEventListener('click', async () => {
+      await Tone.start();
+
+      if (isPlaying) {
+        stopPlayback();
+      } else {
+        startPlayback();
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      notes = [];
+      stopPlayback();
+      render();
+    });
+
+    function startPlayback() {
+      isPlaying = true;
+      playBtn.textContent = '停止';
+      playBtn.style.backgroundColor = '#f59e0b';
+      currentBeat = 0;
+
+      playInterval = setInterval(() => {
+        // 現在の拍で鳴るノートを発音
+        const activeNotes = notes.filter(n => n.startBeat === currentBeat);
+        activeNotes.forEach(n => {
+          currentSynth.triggerAttackRelease(midiToNoteName(n.note), "8n");
+        });
+
+        render();
+        currentBeat = (currentBeat + 1) % TOTAL_BEATS;
+      }, 200); // 120 BPM 相当の速度
+    }
+
+    function stopPlayback() {
+      isPlaying = false;
+      playBtn.textContent = '再生';
+      playBtn.style.backgroundColor = '#10b981';
+      clearInterval(playInterval);
+      currentBeat = 0;
+      render();
+    }
+
+    // --- 画面描画 ---
+    function render() {
+      const width = canvas.width;
+      const height = canvas.height;
+      const cellWidth = width / TOTAL_BEATS;
+      const cellHeight = height / TOTAL_NOTES;
+
+      ctx.clearRect(0, 0, width, height);
+
+      // 背景グリッドと黒鍵ライン描画
+      for (let i = 0; i < TOTAL_NOTES; i++) {
+        const midiNote = MIN_NOTE + (TOTAL_NOTES - 1 - i);
+        const y = i * cellHeight;
+        const pitch = midiNote % 12;
+        const isBlack = [1, 3, 6, 8, 10].includes(pitch);
+
+        ctx.fillStyle = isBlack ? '#1a1a1a' : '#262626';
+        ctx.fillRect(0, y, width, cellHeight);
+
+        ctx.strokeStyle = '#333333';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // 拍の縦線描画
+      for (let b = 0; b < TOTAL_BEATS; b++) {
+        const x = b * cellWidth;
+        ctx.strokeStyle = (b % 4 === 0) ? '#666666' : '#333333';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+
+      // ノート（ブロック）描画
+      notes.forEach(n => {
+        const noteIdx = TOTAL_NOTES - 1 - (n.note - MIN_NOTE);
+        const x = n.startBeat * cellWidth;
+        const y = noteIdx * cellHeight;
+
+        ctx.fillStyle = '#3b82f6';
+        ctx.fillRect(x + 2, y + 2, cellWidth - 4, cellHeight - 4);
+      });
+
+      // 再生カーソル描画
+      if (isPlaying) {
+        const cursorX = currentBeat * cellWidth;
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.fillRect(cursorX, 0, cellWidth, height);
+      }
+    }
+
+    render();
+  </script>
+</body>
+</html>
