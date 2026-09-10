@@ -41,9 +41,6 @@
       cursor: pointer;
       border: none;
     }
-    .btn.active {
-      outline: 2px solid #ffffff;
-    }
     input[type="file"] {
       display: none;
     }
@@ -54,6 +51,20 @@
       padding: 5px;
       border-radius: 6px;
       font-size: 12px;
+    }
+    .bpm-control {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background-color: #2a2a2a;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      font-size: 12px;
+    }
+    .bpm-control input[type="range"] {
+      width: 70px;
+      accent-color: #3b82f6;
     }
     #editor-container {
       flex: 1;
@@ -68,7 +79,7 @@
       height: 100%;
     }
   </style>
-  <!-- Tone.js & Tonejs/Midi (解析・発音用) -->
+  <!-- Tone.js & Tonejs/Midi -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
   <script src="https://unpkg.com/@tonejs/midi"></script>
 </head>
@@ -87,6 +98,13 @@
       <option value="fm">FM Synth</option>
       <option value="am">AM Synth</option>
     </select>
+
+    <!-- BPMコントロール -->
+    <div class="bpm-control">
+      <label for="bpm-slider">BPM:</label>
+      <input type="range" id="bpm-slider" min="40" max="240" value="120">
+      <span id="bpm-val">120</span>
+    </div>
   </div>
 
   <div id="editor-container">
@@ -101,6 +119,8 @@
     const modeBtn = document.getElementById('mode-btn');
     const clearBtn = document.getElementById('clear-btn');
     const synthSelect = document.getElementById('synth-select');
+    const bpmSlider = document.getElementById('bpm-slider');
+    const bpmVal = document.getElementById('bpm-val');
 
     // 音域とグリッド定義 (全88鍵盤 21: A0 〜 108: C8)
     const MIN_NOTE = 21;
@@ -114,6 +134,7 @@
     let currentBeat = 0;
     let playTimer = null;
     let mode = 'scroll'; // 'scroll' または 'edit'
+    let bpm = 120;
 
     // スクロール用オフセット
     let scrollX = 0;
@@ -128,6 +149,15 @@
       if (e.target.value === 'fm') type = Tone.FMSynth;
       if (e.target.value === 'am') type = Tone.AMSynth;
       synth = new Tone.PolySynth(type).toDestination();
+    });
+
+    // --- BPMスライダー ---
+    bpmSlider.addEventListener('input', (e) => {
+      bpm = parseInt(e.target.value);
+      bpmVal.textContent = bpm;
+      if (isPlaying) {
+        restartTimer();
+      }
     });
 
     function resizeCanvas() {
@@ -159,13 +189,15 @@
       const parsedMidi = new Midi(buffer);
 
       notes = [];
-      const bpm = parsedMidi.header.tempos[0]?.bpm || 120;
+      const fileBpm = Math.round(parsedMidi.header.tempos[0]?.bpm || 120);
+      bpm = fileBpm;
+      bpmSlider.value = bpm;
+      bpmVal.textContent = bpm;
 
       parsedMidi.tracks.forEach(track => {
         track.notes.forEach(n => {
-          // 秒(seconds)から拍(beats)に換算
-          const startBeat = n.time * (bpm / 60);
-          const duration = n.duration * (bpm / 60);
+          const startBeat = n.time * (fileBpm / 60);
+          const duration = n.duration * (fileBpm / 60);
           notes.push({
             note: n.midi,
             startBeat: startBeat,
@@ -179,7 +211,7 @@
       render();
     });
 
-    // --- スマホ タッチ操作 (スクロール & 打ち込み) ---
+    // --- スマホ タッチ操作 ---
     let isDragging = false;
     let startTouchX = 0, startTouchY = 0;
     let initialScrollX = 0, initialScrollY = 0;
@@ -247,25 +279,30 @@
       isPlaying = true;
       playBtn.textContent = '停止';
       playBtn.style.backgroundColor = '#f59e0b';
+      restartTimer();
+    }
+
+    function restartTimer() {
+      if (playTimer) clearInterval(playTimer);
+
+      // 16分音符ごとの間隔 (ミリ秒) をBPMから計算
+      const intervalMs = (60 / bpm / 4) * 1000;
 
       playTimer = setInterval(() => {
-        // 現在の拍で鳴るノートを発音
-        const activeNotes = notes.filter(n => n.startBeat <= currentBeat && (n.startBeat + n.duration) > currentBeat);
-        
-        // 拍の開始のタイミングのみ発音
+        // 発音処理
         notes.filter(n => Math.abs(n.startBeat - currentBeat) < 0.125).forEach(n => {
           synth.triggerAttackRelease(Tone.Frequency(n.note, "midi").toNote(), "8n");
         });
 
-        // 再生位置に合わせて画面を自動横スクロール
+        // スクロール追従
         const cursorPx = currentBeat * BEAT_WIDTH;
         if (cursorPx - scrollX > canvas.width * 0.8 || cursorPx < scrollX) {
           scrollX = Math.max(0, cursorPx - 100);
         }
 
         render();
-        currentBeat += 0.25; // 16分音符ずつ進む
-      }, 125); // BPM 120 相当
+        currentBeat += 0.25;
+      }, intervalMs);
     }
 
     function stopPlayback() {
@@ -343,7 +380,6 @@
       }
     }
 
-    // 初期化
     resizeCanvas();
   </script>
 </body>
