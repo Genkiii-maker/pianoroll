@@ -66,6 +66,38 @@
       width: 60px;
       accent-color: #3b82f6;
     }
+    /* 追加: トラック管理用のバー */
+    #track-bar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      background-color: #181818;
+      padding: 6px 8px;
+      border-bottom: 1px solid #333;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .track-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background-color: #282828;
+      font-size: 12px;
+      border: 1px solid #444;
+      cursor: pointer;
+    }
+    .track-item.active {
+      border-color: #ffffff;
+      background-color: #333333;
+    }
+    .track-color-badge {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
     #editor-container {
       flex: 1;
       position: relative;
@@ -92,18 +124,26 @@
     <button id="play-btn" class="btn" style="background-color: #10b981;">再生</button>
     <button id="mode-btn" class="btn" style="background-color: #f59e0b;">モード: スクロール</button>
     <button id="clear-btn" class="btn" style="background-color: #ef4444;">全消去</button>
-    
-    <select id="synth-select">
-      <option value="synth">Synth</option>
-      <option value="fm">FM Synth</option>
-      <option value="am">AM Synth</option>
-    </select>
 
     <div class="bpm-control">
       <label for="bpm-slider">BPM:</label>
       <input type="range" id="bpm-slider" min="40" max="240" value="120">
       <span id="bpm-val">120</span>
     </div>
+  </div>
+
+  <!-- 【追加】トラック切り替え＆音色変更バー -->
+  <div id="track-bar">
+    <div id="track-list" style="display: flex; gap: 6px;"></div>
+    <button id="add-track-btn" class="btn" style="background-color: #4b5563; padding: 4px 8px;">+ トラック追加</button>
+    
+    <label for="synth-select" style="font-size: 12px; margin-left: 8px;">音色:</label>
+    <select id="synth-select">
+      <option value="synth">Synth</option>
+      <option value="fm">FM Synth</option>
+      <option value="am">AM Synth</option>
+      <option value="duo">Duo Synth</option>
+    </select>
   </div>
 
   <div id="editor-container">
@@ -120,36 +160,94 @@
     const synthSelect = document.getElementById('synth-select');
     const bpmSlider = document.getElementById('bpm-slider');
     const bpmVal = document.getElementById('bpm-val');
+    
+    const trackListEl = document.getElementById('track-list');
+    const addTrackBtn = document.getElementById('add-track-btn');
 
     // 音域定義 (全88鍵盤 21: A0 〜 108: C8)
     const MIN_NOTE = 21;
     const MAX_NOTE = 108;
     const TOTAL_NOTES = MAX_NOTE - MIN_NOTE + 1;
 
-    // 動的なグリッドサイズ（ズーム対応）
-    let beatWidth = 40;   // 1拍の幅 (px)
-    let noteHeight = 16;  // 1音高の高さ (px)
+    // トラックカラーのプリセット
+    const TRACK_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
 
-    let notes = []; 
+    let beatWidth = 40;   
+    let noteHeight = 16;  
+
+    // 【拡張】トラック構造のデータ管理
+    // tracks = [{ id: 0, name: "Track 1", color: "#3b82f6", synthType: "synth", synth: PolySynth, notes: [...] }]
+    let tracks = [];
+    let currentTrackIndex = 0;
+
     let isPlaying = false;
     let currentBeat = 0;
     let playTimer = null;
     let mode = 'scroll'; 
     let bpm = 120;
 
-    // スクロール用オフセット
     let scrollX = 0;
     let scrollY = (TOTAL_NOTES - 24) * noteHeight;
 
-    // --- Tone.js 音声設定 ---
-    let synth = new Tone.PolySynth(Tone.Synth).toDestination();
+    // --- トラック & 音源管理 ---
+    function createSynth(type) {
+      let synthClass = Tone.Synth;
+      if (type === 'fm') synthClass = Tone.FMSynth;
+      if (type === 'am') synthClass = Tone.AMSynth;
+      if (type === 'duo') synthClass = Tone.DuoSynth;
+      return new Tone.PolySynth(synthClass).toDestination();
+    }
 
+    function addTrack(name = null, synthType = 'synth') {
+      const id = tracks.length;
+      const color = TRACK_COLORS[id % TRACK_COLORS.length];
+      const trackName = name || `Track ${id + 1}`;
+      
+      const newTrack = {
+        id: id,
+        name: trackName,
+        color: color,
+        synthType: synthType,
+        synth: createSynth(synthType),
+        notes: []
+      };
+
+      tracks.push(newTrack);
+      currentTrackIndex = tracks.length - 1;
+      updateTrackUI();
+      render();
+    }
+
+    function updateTrackUI() {
+      trackListEl.innerHTML = '';
+      tracks.forEach((t, index) => {
+        const item = document.createElement('div');
+        item.className = `track-item ${index === currentTrackIndex ? 'active' : ''}`;
+        item.innerHTML = `
+          <span class="track-color-badge" style="background-color: ${t.color}"></span>
+          <span>${t.name}</span>
+        `;
+        item.addEventListener('click', () => {
+          currentTrackIndex = index;
+          synthSelect.value = tracks[currentTrackIndex].synthType;
+          updateTrackUI();
+          render();
+        });
+        trackListEl.appendChild(item);
+      });
+    }
+
+    // 選択中のトラックの音色変更
     synthSelect.addEventListener('change', (e) => {
-      synth.dispose();
-      let type = Tone.Synth;
-      if (e.target.value === 'fm') type = Tone.FMSynth;
-      if (e.target.value === 'am') type = Tone.AMSynth;
-      synth = new Tone.PolySynth(type).toDestination();
+      if (!tracks[currentTrackIndex]) return;
+      const type = e.target.value;
+      tracks[currentTrackIndex].synth.dispose();
+      tracks[currentTrackIndex].synthType = type;
+      tracks[currentTrackIndex].synth = createSynth(type);
+    });
+
+    addTrackBtn.addEventListener('click', () => {
+      addTrack();
     });
 
     bpmSlider.addEventListener('input', (e) => {
@@ -159,8 +257,9 @@
     });
 
     function resizeCanvas() {
+      const topOffset = document.getElementById('controls').offsetHeight + document.getElementById('track-bar').offsetHeight;
       canvas.width = window.innerWidth * window.devicePixelRatio;
-      canvas.height = (window.innerHeight - document.getElementById('controls').offsetHeight) * window.devicePixelRatio;
+      canvas.height = (window.innerHeight - topOffset) * window.devicePixelRatio;
       render();
     }
     window.addEventListener('resize', resizeCanvas);
@@ -177,6 +276,7 @@
       }
     });
 
+    // --- MIDIファイルの複数トラック解析 ---
     midiInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -184,17 +284,25 @@
       const buffer = await file.arrayBuffer();
       const parsedMidi = new Midi(buffer);
 
-      notes = [];
+      // 既存トラック破棄
+      tracks.forEach(t => t.synth.dispose());
+      tracks = [];
+
       const fileBpm = Math.round(parsedMidi.header.tempos[0]?.bpm || 120);
       bpm = fileBpm;
       bpmSlider.value = bpm;
       bpmVal.textContent = bpm;
 
-      parsedMidi.tracks.forEach(track => {
+      parsedMidi.tracks.forEach((track, idx) => {
+        if (track.notes.length === 0) return;
+
+        addTrack(track.name || `Track ${tracks.length + 1}`);
+        const currentT = tracks[tracks.length - 1];
+
         track.notes.forEach(n => {
           const startBeat = n.time * (fileBpm / 60);
           const duration = n.duration * (fileBpm / 60);
-          notes.push({
+          currentT.notes.push({
             note: n.midi,
             startBeat: startBeat,
             duration: Math.max(duration, 0.25)
@@ -202,6 +310,10 @@
         });
       });
 
+      if (tracks.length === 0) addTrack(); // ノートが無い場合の初期トラック
+
+      currentTrackIndex = 0;
+      updateTrackUI();
       stopPlayback();
       scrollX = 0;
       render();
@@ -226,7 +338,7 @@
         initialScrollX = scrollX;
         initialScrollY = scrollY;
 
-        if (mode === 'edit') {
+        if (mode === 'edit' && tracks[currentTrackIndex]) {
           const rect = canvas.getBoundingClientRect();
           const clientX = (e.clientX - rect.left) * window.devicePixelRatio;
           const clientY = (e.clientY - rect.top) * window.devicePixelRatio;
@@ -237,19 +349,19 @@
 
           if (midiNote >= MIN_NOTE && midiNote <= MAX_NOTE) {
             const targetBeat = Math.floor(beat);
-            const existingIdx = notes.findIndex(n => n.note === midiNote && Math.abs(n.startBeat - targetBeat) < 0.5);
+            const activeNotes = tracks[currentTrackIndex].notes;
+            const existingIdx = activeNotes.findIndex(n => n.note === midiNote && Math.abs(n.startBeat - targetBeat) < 0.5);
 
             if (existingIdx >= 0) {
-              notes.splice(existingIdx, 1);
+              activeNotes.splice(existingIdx, 1);
             } else {
-              notes.push({ note: midiNote, startBeat: targetBeat, duration: 1 });
-              synth.triggerAttackRelease(Tone.Frequency(midiNote, "midi").toNote(), "8n");
+              activeNotes.push({ note: midiNote, startBeat: targetBeat, duration: 1 });
+              tracks[currentTrackIndex].synth.triggerAttackRelease(Tone.Frequency(midiNote, "midi").toNote(), "8n");
             }
             render();
           }
         }
       } else if (activeTouches.size === 2) {
-        // 2本指タッチ検出でピンチ計算を初期化
         const points = Array.from(activeTouches.values());
         initialPinchDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
         initialBeatWidth = beatWidth;
@@ -261,13 +373,11 @@
       if (!activeTouches.has(e.pointerId)) return;
       activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      // 2本指ピンチイン / ピンチアウト操作
       if (activeTouches.size === 2 && initialPinchDistance) {
         const points = Array.from(activeTouches.values());
         const currentDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
         const scale = currentDistance / initialPinchDistance;
 
-        // 拡大・縮小制限
         beatWidth = Math.max(10, Math.min(150, initialBeatWidth * scale));
         noteHeight = Math.max(6, Math.min(50, initialNoteHeight * scale));
 
@@ -275,7 +385,6 @@
         return;
       }
 
-      // 1本指ドラッグスクロール
       if (activeTouches.size === 1 && mode === 'scroll') {
         const dx = (e.clientX - singleStartTouch.x) * window.devicePixelRatio;
         const dy = (e.clientY - singleStartTouch.y) * window.devicePixelRatio;
@@ -289,15 +398,13 @@
 
     const handlePointerEnd = (e) => {
       activeTouches.delete(e.pointerId);
-      if (activeTouches.size < 2) {
-        initialPinchDistance = null;
-      }
+      if (activeTouches.size < 2) initialPinchDistance = null;
     };
 
     canvas.addEventListener('pointerup', handlePointerEnd);
     canvas.addEventListener('pointercancel', handlePointerEnd);
 
-    // --- 再生処理 ---
+    // --- 再生処理 (複数トラック全再生) ---
     playBtn.addEventListener('click', async () => {
       await Tone.start();
       if (isPlaying) stopPlayback();
@@ -305,7 +412,7 @@
     });
 
     clearBtn.addEventListener('click', () => {
-      notes = [];
+      tracks.forEach(t => t.notes = []);
       stopPlayback();
       render();
     });
@@ -322,8 +429,11 @@
       const intervalMs = (60 / bpm / 4) * 1000;
 
       playTimer = setInterval(() => {
-        notes.filter(n => Math.abs(n.startBeat - currentBeat) < 0.125).forEach(n => {
-          synth.triggerAttackRelease(Tone.Frequency(n.note, "midi").toNote(), "8n");
+        // すべてのトラックの該当ノーツを発音
+        tracks.forEach(t => {
+          t.notes.filter(n => Math.abs(n.startBeat - currentBeat) < 0.125).forEach(n => {
+            t.synth.triggerAttackRelease(Tone.Frequency(n.note, "midi").toNote(), "8n");
+          });
         });
 
         const cursorPx = currentBeat * beatWidth;
@@ -345,7 +455,7 @@
       render();
     }
 
-    // --- 描画処理 ---
+    // --- 描画処理 (全トラック描画) ---
     function render() {
       const width = canvas.width;
       const height = canvas.height;
@@ -385,18 +495,28 @@
         ctx.stroke();
       }
 
-      // ノート描画
-      notes.forEach(n => {
-        const noteIdx = TOTAL_NOTES - 1 - (n.note - MIN_NOTE);
-        const x = (n.startBeat * beatWidth) - scrollX;
-        const y = (noteIdx * noteHeight) - scrollY;
-        const w = n.duration * beatWidth;
+      // 【拡張】全トラックのノーツを描画 (非アクティブトラックは少し透明化)
+      tracks.forEach((t, tIdx) => {
+        const isActive = (tIdx === currentTrackIndex);
+        ctx.fillStyle = t.color;
+        ctx.globalAlpha = isActive ? 1.0 : 0.4; // 選択中でないトラックは半透明で描画
 
-        if (x + w > 0 && x < width && y + noteHeight > 0 && y < height) {
-          ctx.fillStyle = '#3b82f6';
-          ctx.fillRect(x + 1, y + 1, Math.max(w - 2, 2), Math.max(noteHeight - 2, 2));
-        }
+        t.notes.forEach(n => {
+          const noteIdx = TOTAL_NOTES - 1 - (n.note - MIN_NOTE);
+          const x = (n.startBeat * beatWidth) - scrollX;
+          const y = (noteIdx * noteHeight) - scrollY;
+          const w = n.duration * beatWidth;
+
+          if (x + w > 0 && x < width && y + noteHeight > 0 && y < height) {
+            ctx.fillRect(x + 1, y + 1, Math.max(w - 2, 2), Math.max(noteHeight - 2, 2));
+            if (isActive) {
+              ctx.strokeStyle = '#ffffff';
+              ctx.strokeRect(x + 1, y + 1, Math.max(w - 2, 2), Math.max(noteHeight - 2, 2));
+            }
+          }
+        });
       });
+      ctx.globalAlpha = 1.0;
 
       // 再生バー描画
       if (isPlaying) {
@@ -411,6 +531,8 @@
       }
     }
 
+    // 初期トラック追加 & 画面リサイズ対応
+    addTrack();
     resizeCanvas();
   </script>
 </body>
