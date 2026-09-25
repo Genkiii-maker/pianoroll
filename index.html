@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#080a10">
+  <title>Mobile MIDI Visualizer & Editor</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <script src="https://unpkg.com/@tonejs/midi"></script>
+</head>
+<body>
+  <header id="controls">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-title">MIDI ROLL</span>
+    </div>
+
+    <div class="control-group">
+      <label class="btn btn-purple" for="midi-input">MIDI読込</label>
+      <input type="file" id="midi-input" accept=".mid,.midi">
+
+      <button id="play-btn" class="btn btn-green">再生</button>
+      <button id="mode-btn" class="btn btn-amber">モード: スクロール</button>
+      <button id="clear-btn" class="btn btn-red">全消去</button>
+    </div>
+
+    <div class="bpm-control">
+      <span class="bpm-label">BPM</span>
+      <input type="range" id="bpm-slider" min="40" max="240" value="120">
+      <span id="bpm-val" class="bpm-value">120</span>
+    </div>
+  </header>
+
+  <section id="track-bar">
+    <div id="track-list"></div>
+
+    <button id="add-track-btn" class="track-add-btn">
+      <span class="plus">＋</span> トラック
+    </button>
+
+    <div class="sound-control">
+      <span class="sound-label">音色</span>
+      <select id="synth-select">
+        <option value="synth">Synth</option>
+        <option value="fm">FM Synth</option>
+        <option value="am">AM Synth</option>
+      </select>
+    </div>
+  </section>
+
+  <main id="editor-container">
+    <div class="corner-glow"></div>
+    <canvas id="canvas"></canvas>
+    <div class="hint">
+      <span>2本指</span> ズーム　·　<span>1本指</span> スクロール / 打ち込み
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
