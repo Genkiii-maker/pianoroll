@@ -378,3 +378,18 @@ select {
     display: none;
   }
 }
+
+
+.drum-add-btn {
+  border-color: rgba(239, 143, 189, 0.28);
+  color: #e7b0cb;
+  background: rgba(239, 143, 189, 0.045);
+}
+
+.drum-add-btn:active {
+  background: rgba(239, 143, 189, 0.10);
+}
+
+.drum-lane-label {
+  font-size: 8px;
+}
